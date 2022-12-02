@@ -110,6 +110,8 @@ def run_baseline(args, env, oracle_solution=None, strategy=None, seed=None):
     observation, static_info = env.reset()
     epoch_tlim = static_info['epoch_tlim']
     num_requests_postponed = 0
+    # This is used for postone
+    is_postpone = False
     while not done:
         epoch_instance = observation['epoch_instance']
 
@@ -124,9 +126,13 @@ def run_baseline(args, env, oracle_solution=None, strategy=None, seed=None):
             epoch_solution = [route for route in oracle_solution if len(request_idx.intersection(route)) == len(route)]
             cost = tools.validate_dynamic_epoch_solution(epoch_instance, epoch_solution)
         else:
-            # Select the requests to dispatch using the strategy
-            # Note: DQN strategy requires more than just epoch instance, bit hacky for compatibility with other strategies
-            epoch_instance_dispatch = strategy({**epoch_instance, 'observation': observation, 'static_info': static_info}, rng)
+            if args.strategy == 'postone':
+                epoch_instance_dispatch = strategy({**epoch_instance, 'observation': observation, 'static_info': static_info}, rng, is_postpone)
+                is_postpone = epoch_instance_dispatch['is_postpone']
+            else:    
+                # Select the requests to dispatch using the strategy
+                # Note: DQN strategy requires more than just epoch instance, bit hacky for compatibility with other strategies
+                epoch_instance_dispatch = strategy({**epoch_instance, 'observation': observation, 'static_info': static_info}, rng)
 
             # Run HGS with time limit and get last solution (= best solution found)
             # Note we use the same solver_seed in each epoch: this is sufficient as for the static problem
@@ -215,6 +221,10 @@ if __name__ == "__main__":
                 from baselines.dqn.utils import load_model
                 net = load_model(args.model_path, device='cpu')
                 strategy = functools.partial(STRATEGIES['dqn'], net=net)
+            elif args.strategy in ['postone','postall']:
+                import pickle
+                net = pickle.load(open(os.path.join(args.model_path,'model.pth'),'rb'))
+                strategy = functools.partial(STRATEGIES['postone'], net=net)
             else:
                 strategy = STRATEGIES[args.strategy]
 
