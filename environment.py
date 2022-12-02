@@ -128,6 +128,8 @@ class VRPEnvironment(Environment):
             self.request_must_dispatch = np.array([False])
 
         self.is_done = False
+        # self.cluster_instance = self.get_cluster()
+        # self.top_node = self.find_top_node()
         obs = self._next_observation()
 
         self.final_solutions = {}
@@ -269,6 +271,7 @@ class VRPEnvironment(Environment):
         # Return instance based on customers not yet dispatched
         idx_undispatched = self.request_id[~self.request_is_dispatched]
         customer_idx = self.request_customer_index[idx_undispatched]
+        customer_must_dispatch_idx = customer_idx[self.request_must_dispatch[idx_undispatched]]
         # Return a VRPTW instance with undispatched requests with two additional properties: customer_idx and request_idx
         time_windows = self.request_timewi[idx_undispatched]
 
@@ -285,6 +288,9 @@ class VRPEnvironment(Environment):
             'service_times': self.request_service_t[idx_undispatched],
             'duration_matrix': self.instance['duration_matrix'][np.ix_(customer_idx, customer_idx)],
             'must_dispatch': self.request_must_dispatch[idx_undispatched],
+            # 'cluster': self.cluster_instance[customer_idx],
+            # 'top_must_dispatch_node':np.array([self.top_node[idx][0] for idx in customer_must_dispatch_idx]),
+            # 'top_node':self.top_node,
         }
         return {
             'current_epoch': self.current_epoch,
@@ -317,3 +323,61 @@ class VRPEnvironment(Environment):
             # 'must_dispatch': self.request_must_dispatch,
             'release_times': release_times
         }
+
+    def plot_cluster(self,max_cluster=10):
+        from sklearn.cluster import KMeans
+        import matplotlib.pyplot as plt
+        from datetime import datetime
+
+        X = self.instance['coords']
+        rng_cluster = range(1,max_cluster)
+        list_sse = []
+        for n_cluster in rng_cluster:
+            km = KMeans(n_clusters=n_cluster, random_state=0).fit(X)
+            sse = km.inertia_
+            list_sse.append(sse)
+
+        plt.plot(rng_cluster,list_sse)
+        plt.savefig(f'fig_cluster/{datetime.strftime(datetime.now(),"%Y-%m-%d %H:%M:%S")}')
+        return()
+
+    def get_cluster(self):
+        from sklearn.cluster import KMeans
+        
+        X = self.instance['coords']
+        km = KMeans(n_clusters=3, random_state=0).fit(X)
+        cluster = np.concatenate(([0],km.labels_))
+        return(cluster)
+
+    def find_top_node(self):
+        CUTOFF_INCREMENT = 1
+
+        def get_top_node(arr,mode='increment'):
+            if mode == 'increment':
+                sorted_idx = np.argsort(arr)
+                sorted_duration = np.sort(arr)
+
+                # Get percent increment of duration from the nearest node
+                diff_duration = np.diff(sorted_duration)
+                percent_duration = diff_duration/sorted_duration[sum(sorted_duration==0)]
+                # Check whether node is within CUTOFF_INCREMENT
+                is_within_cutoff = (percent_duration<=CUTOFF_INCREMENT)
+            
+            # Get the farest node within CUTOFF
+            idx_top_node = np.where(is_within_cutoff==False)[0][1] if len(np.where(is_within_cutoff==False)[0]) > 2 else 2
+            idx_top_node = max(idx_top_node,2)
+            # Select nodes within CUTOFF
+            # Ignore the current node ([1:...])
+            idx_selected_node = sorted_idx[1:idx_top_node]
+            return(idx_selected_node)
+        
+        duration_matrix = self.instance['duration_matrix']
+        dict_top_node = {}
+        for idx_node in range(len(duration_matrix)):
+            row_duration = duration_matrix[idx_node,:]
+            col_duration = duration_matrix[:,idx_node]
+            top_node = np.concatenate((get_top_node(row_duration,mode='increment'),
+                                        get_top_node(col_duration,mode='increment')))
+            dict_top_node[int(idx_node)] = list(set(top_node.astype('int')))
+
+        return(dict_top_node)
